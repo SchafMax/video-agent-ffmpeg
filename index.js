@@ -1,80 +1,68 @@
-const express = require("express");
-const cors = require("cors");
-const fs = require("fs");
-const https = require("https");
-const ffmpeg = require("fluent-ffmpeg");
-const { v4: uuidv4 } = require("uuid");
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
+const https = require('https');
 
 const app = express();
+const port = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-
-// Téléchargement des fichiers
-function download(url, path) {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(path);
-    https.get(url, (response) => {
-      if (response.statusCode !== 200) {
-        return reject(new Error(`Erreur HTTP ${response.statusCode} pour ${url}`));
-      }
-      response.pipe(file);
-      file.on("finish", () => {
-        file.close(resolve);
-      });
-    }).on("error", (err) => {
-      fs.unlink(path, () => reject(err));
-    });
-  });
-}
-
-app.post("/generate", async (req, res) => {
-  const { audioUrl, imageUrl, text } = req.body;
-
-  const id = uuidv4();
-  const audioPath = `audio_${id}.mp3`;
-  const imagePath = `image_${id}.jpg`;
-  const outputPath = `output_${id}.mp4`;
-
+app.post('/generate', async (req, res) => {
   try {
+    const { audioUrl, imageUrl, text } = req.body;
+    if (!audioUrl || !imageUrl || !text) {
+      return res.status(400).json({ error: 'Missing required fields: audioUrl, imageUrl, text' });
+    }
+
+    const download = (url, dest) => {
+      return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        https.get(new URL(url), (response) => {
+          if (response.statusCode !== 200) {
+            reject(new Error(`Failed to download file from ${url}. Status code: ${response.statusCode}`));
+            return;
+          }
+          response.pipe(file);
+          file.on('finish', () => {
+            file.close(resolve);
+          });
+        }).on('error', reject);
+      });
+    };
+
+    const audioPath = path.join(__dirname, 'audio.mp3');
+    const imagePath = path.join(__dirname, 'image.png');
+    const outputPath = path.join(__dirname, 'output.mp4');
+
     await download(audioUrl, audioPath);
     await download(imageUrl, imagePath);
 
-    // Création de la vidéo avec audio, image de fond et sous-titres
-    ffmpeg()
-      .input(imagePath)
-      .loop(30)
-      .input(audioPath)
-      .videoCodec("libx264")
-      .audioCodec("aac")
-      .format("mp4")
-      .outputOptions([
-        "-pix_fmt yuv420p",
-        "-shortest",
-        "-vf", `scale=720:1280,drawtext=text='${text.replace(/'/g, "\\'")}':fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-th-30`
-      ])
-      .save(outputPath)
-      .on("end", () => {
-        res.sendFile(outputPath, { root: __dirname }, (err) => {
-          if (!err) {
-            fs.unlinkSync(audioPath);
-            fs.unlinkSync(imagePath);
-            fs.unlinkSync(outputPath);
-          }
-        });
-      })
-      .on("error", (err) => {
-        console.error("FFmpeg error:", err);
-        res.status(500).send("Erreur lors de la génération de la vidéo.");
-      });
+    const escapedText = text.replace(/'/g, "\\'").replace(/:/g, '\\:');
 
-  } catch (err) {
-    console.error("Erreur générale:", err);
-    res.status(500).send("Erreur de traitement.");
+    const ffmpegCommand = `ffmpeg -loop 1 -i "${imagePath}" -i "${audioPath}" -vf "drawtext=text='${escapedText}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-th-30" -shortest -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p "${outputPath}"`;
+
+    exec(ffmpegCommand, (err) => {
+      if (err) {
+        console.error('FFmpeg error:', err);
+        return res.status(500).json({ error: 'Video generation failed.' });
+      }
+
+      res.sendFile(outputPath, () => {
+        fs.unlinkSync(audioPath);
+        fs.unlinkSync(imagePath);
+        fs.unlinkSync(outputPath);
+      });
+    });
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server ready on port ${PORT}`);
+app.listen(port, () => {
+  console.log(`Server ready on port ${port}`);
 });
