@@ -20,6 +20,7 @@ app.post('/generate', async (req, res) => {
   const output = `/tmp/video-${id}.mp4`;
   const imagePath = `/tmp/bg-${id}.jpg`;
   const audioPath = `/tmp/audio-${id}.mp3`;
+  const subtitleText = req.body.text || "Default subtitle text";
 
   // Fonction pour télécharger un fichier
   const download = (url, path) =>
@@ -39,9 +40,26 @@ app.post('/generate', async (req, res) => {
     await download(audioUrl, audioPath);
 
     ffmpeg()
-      .input(imagePath)
-      .loop()
-      .input(audioPath)
+  .input(imagePath)
+  .loop(duration)
+  .addInput(audioPath)
+  .videoFilters([
+    {
+      filter: 'drawtext',
+      options: {
+        fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        text: subtitleText,
+        fontsize: 48,
+        fontcolor: 'white',
+        x: '(w-text_w)/2',
+        y: 'h-(text_h*2)',
+        box: 1,
+        boxcolor: 'black@0.5',
+        boxborderw: 5,
+        line_spacing: 10
+      }
+    }
+  ])
       .videoCodec('libx264')
       .size('1080x1920')
       .outputOptions('-pix_fmt yuv420p')
