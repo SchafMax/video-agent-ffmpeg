@@ -22,19 +22,17 @@ app.post('/generate', async (req, res) => {
   const audioPath = `/tmp/audio-${id}.mp3`;
 
   // Fonction pour télécharger un fichier
-  const download = (url, path) => {
-    return new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(path);
-      https.get(url, (response) => {
-        response.pipe(file);
-        file.on('finish', () => {
-          file.close(resolve);
-        });
-      }).on('error', (err) => {
-        fs.unlink(path, () => reject(err));
-      });
+  const download = (url, path) =>
+  new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(path);
+    https.get(url, (response) => {
+      response.pipe(file);
+      file.on("finish", () => file.close(resolve));
+    }).on("error", (err) => {
+      console.error("Erreur de téléchargement :", err.message); // LOG
+      reject(err);
     });
-  };
+  });
 
   try {
     await download(imageUrl, imagePath);
