@@ -1,83 +1,80 @@
-const express = require('express');
-const https = require('https');
-const fs = require('fs');
-const ffmpeg = require('fluent-ffmpeg');
-const { v4: uuidv4 } = require('uuid');
+const express = require("express");
+const cors = require("cors");
+const fs = require("fs");
+const https = require("https");
+const ffmpeg = require("fluent-ffmpeg");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
-// Route POST /generate
-app.post('/generate', async (req, res) => {
-  const audioUrl = req.body.audioUrl;
-  const imageUrl = req.body.imageUrl;
+const PORT = process.env.PORT || 3000;
 
-  if (!audioUrl || !imageUrl) {
-    return res.status(400).json({ error: 'audioUrl and imageUrl are required' });
-  }
-
-  const id = uuidv4();
-  const output = `/tmp/video-${id}.mp4`;
-  const imagePath = `/tmp/bg-${id}.jpg`;
-  const audioPath = `/tmp/audio-${id}.mp3`;
-  const subtitleText = req.body.text || "Default subtitle text";
-
-  // Fonction pour télécharger un fichier
-  const download = (url, path) =>
-  new Promise((resolve, reject) => {
+// Téléchargement des fichiers
+function download(url, path) {
+  return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(path);
     https.get(url, (response) => {
+      if (response.statusCode !== 200) {
+        return reject(new Error(`Erreur HTTP ${response.statusCode} pour ${url}`));
+      }
       response.pipe(file);
-      file.on("finish", () => file.close(resolve));
+      file.on("finish", () => {
+        file.close(resolve);
+      });
     }).on("error", (err) => {
-      console.error("Erreur de téléchargement :", err.message); // LOG
-      reject(err);
+      fs.unlink(path, () => reject(err));
     });
   });
+}
+
+app.post("/generate", async (req, res) => {
+  const { audioUrl, imageUrl, text } = req.body;
+
+  const id = uuidv4();
+  const audioPath = `audio_${id}.mp3`;
+  const imagePath = `image_${id}.jpg`;
+  const outputPath = `output_${id}.mp4`;
 
   try {
-    await download(imageUrl, imagePath);
     await download(audioUrl, audioPath);
+    await download(imageUrl, imagePath);
 
+    // Création de la vidéo avec audio, image de fond et sous-titres
     ffmpeg()
-  .input(imagePath)
-  .loop(duration)
-  .addInput(audioPath)
-  .videoFilters([
-    {
-      filter: 'drawtext',
-      options: {
-        fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-        text: subtitleText,
-        fontsize: 48,
-        fontcolor: 'white',
-        x: '(w-text_w)/2',
-        y: 'h-(text_h*2)',
-        box: 1,
-        boxcolor: 'black@0.5',
-        boxborderw: 5,
-        line_spacing: 10
-      }
-    }
-  ])
-      .videoCodec('libx264')
-      .size('1080x1920')
-      .outputOptions('-pix_fmt yuv420p')
-      .duration(30)
-      .save(output)
-      .on('end', () => {
-        res.sendFile(output);
+      .input(imagePath)
+      .loop(30)
+      .input(audioPath)
+      .videoCodec("libx264")
+      .audioCodec("aac")
+      .format("mp4")
+      .outputOptions([
+        "-pix_fmt yuv420p",
+        "-shortest",
+        "-vf", `scale=720:1280,drawtext=text='${text.replace(/'/g, "\\'")}':fontcolor=white:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-th-30`
+      ])
+      .save(outputPath)
+      .on("end", () => {
+        res.sendFile(outputPath, { root: __dirname }, (err) => {
+          if (!err) {
+            fs.unlinkSync(audioPath);
+            fs.unlinkSync(imagePath);
+            fs.unlinkSync(outputPath);
+          }
+        });
       })
-      .on('error', (err) => {
-        console.error('FFmpeg error:', err);
-        res.status(500).send('Error during video processing');
+      .on("error", (err) => {
+        console.error("FFmpeg error:", err);
+        res.status(500).send("Erreur lors de la génération de la vidéo.");
       });
-  } catch (error) {
-    console.error('Download error:', error);
-    res.status(500).send('Error downloading files');
+
+  } catch (err) {
+    console.error("Erreur générale:", err);
+    res.status(500).send("Erreur de traitement.");
   }
 });
 
-app.listen(3000, () => {
-  console.log('Server ready on port 3000');
+app.listen(PORT, () => {
+  console.log(`Server ready on port ${PORT}`);
 });
