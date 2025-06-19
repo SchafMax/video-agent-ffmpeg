@@ -1,68 +1,86 @@
 const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const { exec } = require('child_process');
 const https = require('https');
+const fs = require('fs');
+const ffmpeg = require('fluent-ffmpeg');
+const { v4: uuidv4 } = require('uuid');
+const cors = require('cors');
 
 const app = express();
-const port = process.env.PORT || 3000;
-
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
+// Route POST /generate
 app.post('/generate', async (req, res) => {
-  try {
-    const { audioUrl, imageUrl, text } = req.body;
-    if (!audioUrl || !imageUrl || !text) {
-      return res.status(400).json({ error: 'Missing required fields: audioUrl, imageUrl, text' });
-    }
+  const audioUrl = req.body.audioUrl;
+  const imageUrl = req.body.imageUrl;
+  const subtitleText = req.body.text;
 
-    const download = (url, dest) => {
-      return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        https.get(new URL(url), (response) => {
-          if (response.statusCode !== 200) {
-            reject(new Error(`Failed to download file from ${url}. Status code: ${response.statusCode}`));
-            return;
-          }
-          response.pipe(file);
-          file.on('finish', () => {
-            file.close(resolve);
-          });
-        }).on('error', reject);
-      });
-    };
+  if (!audioUrl || !imageUrl || !subtitleText) {
+    return res.status(400).json({ error: 'audioUrl, imageUrl and text are required' });
+  }
 
-    const audioPath = path.join(__dirname, 'audio.mp3');
-    const imagePath = path.join(__dirname, 'image.png');
-    const outputPath = path.join(__dirname, 'output.mp4');
+  const id = uuidv4();
+  const output = `/tmp/video-${id}.mp4`;
+  const imagePath = `/tmp/bg-${id}.jpg`;
+  const audioPath = `/tmp/audio-${id}.mp3`;
 
-    await download(audioUrl, audioPath);
-    await download(imageUrl, imagePath);
-
-    const escapedText = text.replace(/'/g, "\\'").replace(/:/g, '\\:');
-
-    const ffmpegCommand = `ffmpeg -loop 1 -i "${imagePath}" -i "${audioPath}" -vf "drawtext=text='${escapedText}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-th-30" -shortest -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p "${outputPath}"`;
-
-    exec(ffmpegCommand, (err) => {
-      if (err) {
-        console.error('FFmpeg error:', err);
-        return res.status(500).json({ error: 'Video generation failed.' });
-      }
-
-      res.sendFile(outputPath, () => {
-        fs.unlinkSync(audioPath);
-        fs.unlinkSync(imagePath);
-        fs.unlinkSync(outputPath);
+  // Fonction pour télécharger un fichier
+  const download = (url, path) =>
+    new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(path);
+      https.get(url, (response) => {
+        response.pipe(file);
+        file.on("finish", () => file.close(resolve));
+      }).on("error", (err) => {
+        console.error("Erreur de téléchargement :", err.message);
+        reject(err);
       });
     });
+
+  try {
+    await download(imageUrl, imagePath);
+    await download(audioUrl, audioPath);
+
+    ffmpeg()
+      .input(imagePath)
+      .loop(30)
+      .addInput(audioPath)
+      .videoFilters([
+        {
+          filter: 'drawtext',
+          options: {
+            fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            text: subtitleText,
+            fontsize: 48,
+            fontcolor: 'white',
+            x: '(w-text_w)/2',
+            y: 'h-(text_h*2)',
+            box: 1,
+            boxcolor: 'black@0.5',
+            boxborderw: 5,
+            line_spacing: 10,
+          },
+        }
+      ])
+      .videoCodec('libx264')
+      .size('1080x1920')
+      .outputOptions('-pix_fmt yuv420p')
+      .duration(30)
+      .save(output)
+      .on('end', () => {
+        res.sendFile(output);
+      })
+      .on('error', (err) => {
+        console.error('FFmpeg error:', err);
+        res.status(500).send('Error during video processing');
+      });
   } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ error: 'Internal server error.' });
+    console.error('Download error:', error);
+    res.status(500).send('Error downloading files');
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server ready on port ${port}`);
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Server ready on port ${PORT}`);
 });
