@@ -3,19 +3,15 @@ const https = require('https');
 const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
 const { v4: uuidv4 } = require('uuid');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
 app.post('/generate', async (req, res) => {
-  const audioUrl = req.body.audioUrl;
-  const imageUrl = req.body.imageUrl;
-  const subtitleText = req.body.text || "Default subtitle text";
+  const { audioUrl, imageUrl, text } = req.body;
 
-  if (!audioUrl || !imageUrl || !subtitleText) {
-    return res.status(400).json({ error: 'Missing required fields: audioUrl, imageUrl, text' });
+  if (!audioUrl || !imageUrl || !text) {
+    return res.status(400).json({ error: 'audioUrl, imageUrl and text are required' });
   }
 
   const id = uuidv4();
@@ -23,72 +19,75 @@ app.post('/generate', async (req, res) => {
   const imagePath = `/tmp/bg-${id}.jpg`;
   const audioPath = `/tmp/audio-${id}.mp3`;
   const thumbnailPath = `/tmp/thumbnail-${id}.jpg`;
+  const subtitleText = text || 'Default subtitle text';
 
   const download = (url, path) =>
     new Promise((resolve, reject) => {
       const file = fs.createWriteStream(path);
       https.get(url, (response) => {
         response.pipe(file);
-        file.on("finish", () => file.close(resolve));
-      }).on("error", (err) => {
-        console.error("Erreur de téléchargement :", err.message);
+        file.on('finish', () => file.close(resolve));
+      }).on('error', (err) => {
+        console.error('Erreur de téléchargement :', err.message);
         reject(err);
       });
     });
 
   try {
-    await download(imageUrl, imagePath);
+    // Télécharger l'image (ou image de secours si échec)
+    try {
+      await download(imageUrl, imagePath);
+    } catch {
+      await download('https://source.unsplash.com/1080x1920/?background', imagePath);
+    }
+
     await download(audioUrl, audioPath);
 
     // Génération du thumbnail
     await new Promise((resolve, reject) => {
-     ffmpeg()
-  .input(imagePath)
-  .videoFilters([
-    {
-      filter: 'drawtext',
-      options: {
-        fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-        text: subtitleText,
-        fontsize: 60,
-        fontcolor: 'white',
-        x: '(w-text_w)/2',
-        y: '(h-text_h)/2',
-        box: 1,
-        boxcolor: 'black@0.5',
-        boxborderw: 10
-      }
-    }
-  ])
-  .frames(1)
-  .output(thumbnailPath)
-  .on('end', resolve)
-  .on('error', reject)
-  .run();
-    });
-
-    // Génération de la vidéo finale
-    ffmpeg()
-      .input(imagePath)
-      .loop(30)
-      .addInput(audioPath)
-      .videoFilters([
-        {
+      ffmpeg()
+        .input(imagePath)
+        .videoFilters({
           filter: 'drawtext',
           options: {
             fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
             text: subtitleText,
-            fontsize: 48,
+            fontsize: 60,
             fontcolor: 'white',
             x: '(w-text_w)/2',
-            y: 'h-(text_h*2)',
+            y: '(h-text_h)/2',
             box: 1,
             boxcolor: 'black@0.5',
-            boxborderw: 5,
-            line_spacing: 10,
+            boxborderw: 10
           }
+        })
+        .frames(1)
+        .output(thumbnailPath)
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
+
+    // Génération de la vidéo avec sous-titres
+    ffmpeg()
+      .input(imagePath)
+      .loop(30)
+      .addInput(audioPath)
+      .videoFilters({
+        filter: 'drawtext',
+        options: {
+          fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+          text: subtitleText,
+          fontsize: 48,
+          fontcolor: 'white',
+          x: '(w-text_w)/2',
+          y: 'h-(text_h*2)',
+          box: 1,
+          boxcolor: 'black@0.5',
+          boxborderw: 5,
+          line_spacing: 10
         }
-      ])
+      })
       .videoCodec('libx264')
       .size('1080x1920')
       .outputOptions('-pix_fmt yuv420p')
