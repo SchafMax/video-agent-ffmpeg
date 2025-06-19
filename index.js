@@ -42,27 +42,29 @@ app.post('/generate', async (req, res) => {
 
     // Génération du thumbnail
     await new Promise((resolve, reject) => {
-      ffmpeg()
-        .input('https://source.unsplash.com/1080x1920/?abstract,pattern')
-        .videoFilters({
-          filter: 'drawtext',
-          options: {
-            fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-            text: subtitleText,
-            fontsize: 60,
-            fontcolor: 'white',
-            x: '(w-text_w)/2',
-            y: '(h-text_h)/2',
-            box: 1,
-            boxcolor: 'black@0.5',
-            boxborderw: 10
-          }
-        })
-        .frames(1)
-        .output(thumbnailPath)
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
+     ffmpeg()
+  .input(imagePath)
+  .videoFilters([
+    {
+      filter: 'drawtext',
+      options: {
+        fontfile: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        text: subtitleText,
+        fontsize: 60,
+        fontcolor: 'white',
+        x: '(w-text_w)/2',
+        y: '(h-text_h)/2',
+        box: 1,
+        boxcolor: 'black@0.5',
+        boxborderw: 10
+      }
+    }
+  ])
+  .frames(1)
+  .output(thumbnailPath)
+  .on('end', resolve)
+  .on('error', reject)
+  .run();
     });
 
     // Génération de la vidéo finale
