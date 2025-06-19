@@ -5,9 +5,10 @@
   "scripts": {
     "start": "node index.js"
   },
-"dependencies": {
-  "express": "^4.18.2",
-  "uuid": "^9.0.0",
-  "fluent-ffmpeg": "^2.1.2", 
-  "cors": "^2.8.5"          // ← si tu utilises aussi cors
+  "dependencies": {
+    "express": "^4.18.2",
+    "uuid": "^9.0.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "cors": "^2.8.5"
+  }
 }
